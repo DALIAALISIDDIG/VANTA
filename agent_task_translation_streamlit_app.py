@@ -867,4 +867,135 @@ def _run_self_tests() -> None:
     parts = pw.split("$")
     assert len(parts) == 3
     assert parts[0] in {"pbkdf2_sha256", "sha256_iter"}
-    assert verify_password("secret123"
+    assert verify_password("secret123", pw)
+    assert not verify_password("wrong", pw)
+
+    legacy_pw = "$".join(pw.split("$")[1:])
+    if pw.startswith("pbkdf2_sha256$"):
+        assert verify_password("secret123", legacy_pw)
+        assert not verify_password("wrong", legacy_pw)
+    else:
+        assert not verify_password("secret123", legacy_pw)
+
+    signup_errors = validate_signup("user@example.com", "password1", "Test User")
+    assert signup_errors == []
+    assert any(
+        msg == "Password must be at least 8 characters."
+        for msg in validate_signup("user@example.com", "123", "Test User")
+    )
+
+    valid_task = {
+        "task_code": "task_1",
+        "environment": "Moodle",
+        "difficulty": "Easy",
+        "task_text": "Do it",
+        "action_text": "Click",
+        "observation_text": "DOM",
+    }
+    assert validate_task_form(valid_task) == []
+
+    invalid_task = validate_task_form(
+        {
+            "task_code": "",
+            "environment": "",
+            "difficulty": "Bad",
+            "task_text": "",
+            "action_text": "",
+            "observation_text": "",
+        }
+    )
+    assert any(msg == "Task code is required." for msg in invalid_task)
+    assert any(msg == "Environment is required." for msg in invalid_task)
+    assert any(msg == "Task is required." for msg in invalid_task)
+    assert any(msg == "Action is required." for msg in invalid_task)
+    assert any(msg == "Observation is required." for msg in invalid_task)
+    assert any(msg == "Difficulty must be Easy, Medium, or Hard." for msg in invalid_task)
+
+    assert validate_translation_form("Hallo", "Klick", "DOM") == []
+    translation_errors = validate_translation_form("", "Klick", "")
+    assert any(msg == "Translated Task is required." for msg in translation_errors)
+    assert any(msg == "Translated Observation is required." for msg in translation_errors)
+
+    storage = InMemoryStorage()
+    admin = storage.get_user_by_email(DEMO_ADMIN_EMAIL)
+    assert admin is not None
+    assert verify_password(DEMO_ADMIN_PASSWORD, admin["password_hash"])
+
+    user = storage.create_user(
+        {
+            "email": "translator@example.com",
+            "full_name": "Translator",
+            "password_hash": hash_password("password123"),
+            "role": "translator",
+        }
+    )
+    fetched_user = storage.get_user_by_email("translator@example.com")
+    assert fetched_user is not None
+    assert fetched_user["id"] == user["id"]
+
+    created = storage.create_task(
+        normalize_task_payload(
+            "task_x",
+            "HR",
+            "Medium",
+            "Review application",
+            "click approve",
+            "decision screen",
+            admin["email"],
+        )
+    )
+    assert any(task["task_code"] == "task_x" for task in storage.list_tasks())
+
+    storage.upsert_translation(
+        {
+            "task_id": created["id"],
+            "language_code": "de",
+            "language_label": "German",
+            "task_translation": "Überprüfen Sie den Antrag",
+            "action_translation": "Klicken Sie auf Genehmigen",
+            "observation_translation": "Entscheidungsansicht",
+            "user_email": user["email"],
+            "updated_at": utc_now_iso(),
+        }
+    )
+    storage.upsert_translation(
+        {
+            "task_id": created["id"],
+            "language_code": "de",
+            "language_label": "German",
+            "task_translation": "Überarbeitete Aufgabe",
+            "action_translation": "Überarbeitete Aktion",
+            "observation_translation": "Überarbeitete Beobachtung",
+            "user_email": user["email"],
+            "updated_at": utc_now_iso(),
+        }
+    )
+
+    rows = storage.list_translations(created["id"])
+    assert len([r for r in rows if r["user_email"] == user["email"] and r["language_code"] == "de"]) == 1
+    assert any(r["task_translation"] == "Überarbeitete Aufgabe" for r in rows)
+    assert any(r["action_translation"] == "Überarbeitete Aktion" for r in rows)
+    assert any(r["observation_translation"] == "Überarbeitete Beobachtung" for r in rows)
+
+    translation_id = rows[0]["id"]
+    storage.delete_translation(translation_id)
+    assert storage.list_translations(created["id"]) == []
+
+    storage.delete_task(created["id"])
+    assert not any(task["task_code"] == "task_x" for task in storage.list_tasks())
+
+
+if __name__ == "__main__":
+    run_self_tests = False
+    try:
+        run_self_tests = bool(getattr(st, "secrets", {}).get("app", {}).get("run_self_tests", False))
+    except Exception:
+        run_self_tests = False
+
+    if not STREAMLIT_AVAILABLE or run_self_tests:
+        _run_self_tests()
+
+    if STREAMLIT_AVAILABLE:
+        render_streamlit_app()
+    else:
+        render_cli_summary()
