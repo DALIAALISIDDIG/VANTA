@@ -23,6 +23,7 @@ except ModuleNotFoundError:
     class _DummyStreamlit:
         cache_resource = _DummyCacheResource()
         secrets: Dict[str, Dict[str, str]] = {}
+        session_state: Dict[str, Any] = {}
 
     st = _DummyStreamlit()  # type: ignore
 
@@ -93,9 +94,11 @@ def hash_password(password: str, salt_hex: Optional[str] = None) -> str:
 def verify_password(password: str, stored: str) -> bool:
     try:
         parts = stored.split("$")
+        legacy_format = False
         if len(parts) == 3:
             algorithm, salt_hex, digest_hex = parts
         elif len(parts) == 2:
+            legacy_format = True
             algorithm = "pbkdf2_sha256"
             salt_hex, digest_hex = parts
         else:
@@ -118,6 +121,9 @@ def verify_password(password: str, stored: str) -> bool:
             candidate_digest_hex = fallback_digest.hex()
         else:
             return False
+
+    if legacy_format:
+        return hmac.compare_digest(candidate_digest_hex, digest_hex)
 
     candidate = f"{algorithm}${salt_hex}${candidate_digest_hex}"
     return hmac.compare_digest(candidate, stored)
@@ -567,6 +573,7 @@ def _run_self_tests() -> None:
     legacy_pw = "$".join(pw.split("$")[1:])
     if pw.startswith("pbkdf2_sha256$"):
         assert verify_password("secret123", legacy_pw)
+        assert not verify_password("wrong", legacy_pw)
     else:
         assert not verify_password("secret123", legacy_pw)
 
@@ -622,9 +629,16 @@ def _run_self_tests() -> None:
     assert any(r["translation_text"] == "Überarbeitete Übersetzung" for r in rows)
 
 
-_run_self_tests()
-
 if __name__ == "__main__":
+    run_self_tests = False
+    try:
+        run_self_tests = bool(getattr(st, "secrets", {}).get("app", {}).get("run_self_tests", False))
+    except Exception:
+        run_self_tests = False
+
+    if not STREAMLIT_AVAILABLE or run_self_tests:
+        _run_self_tests()
+
     if STREAMLIT_AVAILABLE:
         render_streamlit_app()
     else:
