@@ -137,7 +137,7 @@ def verify_password(password: str, stored: str) -> bool:
 
 def validate_task_form(payload: Dict[str, Any]) -> List[str]:
     errors = []
-    for key, label in [("task_code", "Task code"), ("environment", "Environment"), ("instruction_en", "English instruction")]:
+    for key, label in [("task_code", "Task code"), ("environment", "Environment"), ("task_text", "Task"), ("action_text", "Action"), ("observation_text", "Observation")]:
         err = require_nonempty(payload.get(key, ""), label)
         if err:
             errors.append(err)
@@ -175,10 +175,16 @@ class Storage:
     def update_task(self, task_id: str, payload: Dict[str, Any]) -> None:
         raise NotImplementedError
 
+    def delete_task(self, task_id: str) -> None:
+        raise NotImplementedError
+
     def list_translations(self, task_id: Optional[str] = None) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
     def upsert_translation(self, payload: Dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    def delete_translation(self, translation_id: str) -> None:
         raise NotImplementedError
 
     def create_user(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -196,9 +202,12 @@ class InMemoryStorage(Storage):
                 "task_code": "moodle_create_course_001",
                 "environment": "Moodle LMS",
                 "difficulty": "Easy",
-                "instruction_en": "Create a new course named 'Intro to AI', short name 'AI101', format 'Topics'.",
+                "task_text": "Create a new course named 'Intro to AI'.",
+                "action_text": "click, type, select, submit",
+                "observation_text": "current page DOM, visible text, clickable elements",
                 "created_by": DEMO_ADMIN_EMAIL,
                 "created_at": utc_now_iso(),
+                "updated_at": utc_now_iso(),
             }
         ]
         self.translations: List[Dict[str, Any]] = []
@@ -228,6 +237,10 @@ class InMemoryStorage(Storage):
                 return
         raise KeyError("Task not found")
 
+    def delete_task(self, task_id: str) -> None:
+        self.tasks = [row for row in self.tasks if row["id"] != task_id]
+        self.translations = [row for row in self.translations if row["task_id"] != task_id]
+
     def list_translations(self, task_id: Optional[str] = None) -> List[Dict[str, Any]]:
         rows = list(self.translations)
         if task_id:
@@ -240,6 +253,9 @@ class InMemoryStorage(Storage):
                 self.translations[i] = {**row, **payload}
                 return
         self.translations.append({"id": str(uuid.uuid4()), **payload})
+
+    def delete_translation(self, translation_id: str) -> None:
+        self.translations = [row for row in self.translations if row["id"] != translation_id]
 
     def create_user(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self.get_user_by_email(payload["email"]):
@@ -284,6 +300,10 @@ class SupabaseStorage(Storage):
     def update_task(self, task_id: str, payload: Dict[str, Any]) -> None:
         self._request("PATCH", "tasks", params={"id": f"eq.{task_id}"}, json_body=payload)
 
+    def delete_task(self, task_id: str) -> None:
+        self._request("DELETE", "translations", params={"task_id": f"eq.{task_id}"})
+        self._request("DELETE", "tasks", params={"id": f"eq.{task_id}"})
+
     def list_translations(self, task_id: Optional[str] = None) -> List[Dict[str, Any]]:
         params = {"select": "*", "order": "updated_at.desc"}
         if task_id:
@@ -301,6 +321,9 @@ class SupabaseStorage(Storage):
             timeout=30,
         )
         response.raise_for_status()
+
+    def delete_translation(self, translation_id: str) -> None:
+        self._request("DELETE", "translations", params={"id": f"eq.{translation_id}"})
 
     def create_user(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request("POST", "users", json_body=payload).json()[0]
@@ -328,12 +351,14 @@ def using_persistent_storage() -> bool:
     return bool(supabase_cfg.get("url") and supabase_cfg.get("key"))
 
 
-def normalize_task_payload(task_code: str, environment: str, difficulty: str, instruction_en: str, created_by: str) -> Dict[str, Any]:
+def normalize_task_payload(task_code: str, environment: str, difficulty: str, task_text: str, action_text: str, observation_text: str, created_by: str) -> Dict[str, Any]:
     return {
         "task_code": task_code.strip(),
         "environment": environment.strip(),
         "difficulty": difficulty,
-        "instruction_en": instruction_en.strip(),
+        "task_text": task_text.strip(),
+        "action_text": action_text.strip(),
+        "observation_text": observation_text.strip(),
         "created_by": created_by,
         "updated_at": utc_now_iso(),
     }
@@ -400,10 +425,68 @@ def render_auth_box() -> Optional[Dict[str, Any]]:
     return None
 
 
+def render_task_table(tasks: List[Dict[str, Any]], translations: List[Dict[str, Any]]) -> None:
+    st.markdown("### Tasks")
+    headers = st.columns([1.2, 1.0, 0.8, 1.6, 1.2])
+    headers[0].markdown("**Code**")
+    headers[1].markdown("**Environment**")
+    headers[2].markdown("**Difficulty**")
+    headers[3].markdown("**Task / Action / Observation**")
+    headers[4].markdown("**Translations**")
+
+    for task in tasks:
+        langs = sorted(set(row["language_label"] for row in translations if row["task_id"] == task["id"]))
+        cols = st.columns([1.2, 1.0, 0.8, 1.6, 1.2])
+        cols[0].write(task["task_code"])
+        cols[1].write(task["environment"])
+        cols[2].write(task["difficulty"])
+        cols[3].write(f"Task: {task['task_text']}\n\nAction: {task['action_text']}\n\nObservation: {task['observation_text']}")
+        cols[4].write(", ".join(langs) if langs else "—")
+        st.divider()
+
+
+def render_translation_table(translations: List[Dict[str, Any]], tasks: List[Dict[str, Any]], user: Dict[str, Any], storage: Storage) -> None:
+    st.markdown("### Translations")
+    headers = st.columns([1.2, 1.0, 1.0, 1.8, 0.8, 0.8])
+    headers[0].markdown("**Task**")
+    headers[1].markdown("**Language**")
+    headers[2].markdown("**Translator**")
+    headers[3].markdown("**Translation**")
+    headers[4].markdown("**Edit**")
+    headers[5].markdown("**Delete**")
+
+    task_map = {task["id"]: task for task in tasks}
+    can_delete_all = user["role"] == "admin"
+
+    for row in translations:
+        task = task_map.get(row["task_id"])
+        can_modify = can_delete_all or row["user_email"] == user["email"]
+        cols = st.columns([1.2, 1.0, 1.0, 1.8, 0.8, 0.8])
+        cols[0].write(task["task_code"] if task else row["task_id"])
+        cols[1].write(row["language_label"])
+        cols[2].write(row["user_email"])
+        cols[3].write(row["translation_text"])
+        if can_modify:
+            if cols[4].button("Edit", key=f"edit_translation_{row['id']}"):
+                st.session_state.edit_translation_id = row["id"]
+                st.session_state.edit_translation_text = row["translation_text"]
+                st.session_state.edit_task_id = row["task_id"]
+                st.session_state.edit_language_code = row["language_code"]
+                st.rerun()
+            if cols[5].button("Delete", key=f"delete_translation_{row['id']}"):
+                storage.delete_translation(row["id"])
+                st.success("Translation deleted.")
+                st.rerun()
+        else:
+            cols[4].write("—")
+            cols[5].write("—")
+        st.divider()
+
+
 def render_streamlit_app() -> None:
     st.set_page_config(page_title="Task Translation Manager", page_icon="🌍", layout="wide")
     st.title("🌍 Task Translation Manager")
-    st.caption("Simple app: admins add English tasks, translators choose a language and save their translation.")
+    st.caption("Simple app: admins add English tasks as Task / Action / Observation, and translators choose a language and save their translation.")
 
     if using_persistent_storage():
         st.success("Connected to persistent Supabase storage.")
@@ -430,7 +513,9 @@ create table if not exists tasks (
   task_code text unique not null,
   environment text not null,
   difficulty text not null,
-  instruction_en text not null,
+  task_text text not null,
+  action_text text not null,
+  observation_text text not null,
   created_by text not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz
@@ -451,6 +536,15 @@ create table if not exists translations (
             )
         return
 
+    if "edit_translation_id" not in st.session_state:
+        st.session_state.edit_translation_id = None
+    if "edit_translation_text" not in st.session_state:
+        st.session_state.edit_translation_text = ""
+    if "edit_task_id" not in st.session_state:
+        st.session_state.edit_task_id = None
+    if "edit_language_code" not in st.session_state:
+        st.session_state.edit_language_code = None
+
     top_left, top_right = st.columns([0.8, 0.2])
     with top_left:
         st.write(f"Logged in as **{user['full_name']}** ({user['role']})")
@@ -463,27 +557,36 @@ create table if not exists translations (
     tasks = storage.list_tasks()
     translations = storage.list_translations()
 
-    tabs = ["Translate", "My translations", "Overview"]
+    tabs = ["Translate", "Tasks Table", "Translations Table", "Overview"]
     if user["role"] == "admin":
-        tabs = ["Add English tasks"] + tabs
+        tabs = ["Add / Edit Tasks"] + tabs
     pages = st.tabs(tabs)
     tab_index = 0
 
     if user["role"] == "admin":
         with pages[tab_index]:
-            st.subheader("Add English tasks")
+            st.subheader("Add or edit English tasks")
             existing_map = {f"{t['task_code']} — {t['environment']}": t for t in tasks}
             choice = st.selectbox("Edit existing or create new", ["Create new task"] + list(existing_map.keys()))
             selected = existing_map.get(choice)
-            defaults = selected or {"task_code": "", "environment": "", "difficulty": "Easy", "instruction_en": ""}
+            defaults = selected or {"task_code": "", "environment": "", "difficulty": "Easy", "task_text": "", "action_text": "", "observation_text": ""}
             with st.form("task_form"):
                 task_code = st.text_input("Task code", value=defaults["task_code"])
                 environment = st.text_input("Environment", value=defaults["environment"])
                 difficulty = st.selectbox("Difficulty", ["Easy", "Medium", "Hard"], index=["Easy", "Medium", "Hard"].index(defaults["difficulty"]))
-                instruction_en = st.text_area("English instruction", value=defaults["instruction_en"], height=140)
+                task_text = st.text_area("Task", value=defaults["task_text"], height=100)
+                action_text = st.text_area("Action", value=defaults["action_text"], height=100)
+                observation_text = st.text_area("Observation", value=defaults["observation_text"], height=100)
                 submitted = st.form_submit_button("Save task", use_container_width=True)
             if submitted:
-                payload = {"task_code": task_code, "environment": environment, "difficulty": difficulty, "instruction_en": instruction_en}
+                payload = {
+                    "task_code": task_code,
+                    "environment": environment,
+                    "difficulty": difficulty,
+                    "task_text": task_text,
+                    "action_text": action_text,
+                    "observation_text": observation_text,
+                }
                 errors = validate_task_form(payload)
                 duplicate = any(t["task_code"] == task_code.strip() and (not selected or t["id"] != selected["id"]) for t in tasks)
                 if duplicate:
@@ -492,7 +595,7 @@ create table if not exists translations (
                     for err in errors:
                         st.error(err)
                 else:
-                    clean = normalize_task_payload(task_code, environment, difficulty, instruction_en, user["email"])
+                    clean = normalize_task_payload(task_code, environment, difficulty, task_text, action_text, observation_text, user["email"])
                     if selected:
                         storage.update_task(selected["id"], clean)
                         st.success("Task updated.")
@@ -500,6 +603,21 @@ create table if not exists translations (
                         storage.create_task(clean)
                         st.success("Task created.")
                     st.rerun()
+
+            st.markdown("### Existing tasks")
+            for task in tasks:
+                cols = st.columns([1.2, 1.0, 0.8, 0.8, 0.8])
+                cols[0].write(task["task_code"])
+                cols[1].write(task["environment"])
+                cols[2].write(task["difficulty"])
+                if cols[3].button("Edit", key=f"edit_task_jump_{task['id']}"):
+                    st.session_state["task_form_selected"] = task["id"]
+                if cols[4].button("Delete", key=f"delete_task_{task['id']}"):
+                    storage.delete_task(task["id"])
+                    st.success("Task deleted.")
+                    st.rerun()
+                st.caption(f"Task: {task['task_text']} | Action: {task['action_text']} | Observation: {task['observation_text']}")
+                st.divider()
         tab_index += 1
 
     with pages[tab_index]:
@@ -508,19 +626,32 @@ create table if not exists translations (
             st.info("No English tasks yet.")
         else:
             task_map = {f"{t['task_code']} — {t['environment']}": t for t in tasks}
-            selected_label = st.selectbox("Choose English task", list(task_map.keys()))
+            default_task_label = list(task_map.keys())[0]
+            if st.session_state.edit_task_id:
+                for label, t in task_map.items():
+                    if t["id"] == st.session_state.edit_task_id:
+                        default_task_label = label
+                        break
+            selected_label = st.selectbox("Choose English task", list(task_map.keys()), index=list(task_map.keys()).index(default_task_label))
             task = task_map[selected_label]
-            lang_code = st.selectbox("Choose target language", [code for code, _ in SUPPORTED_LANGUAGES], format_func=get_language_label)
+            lang_codes = [code for code, _ in SUPPORTED_LANGUAGES]
+            default_lang_code = st.session_state.edit_language_code if st.session_state.edit_language_code in lang_codes else lang_codes[0]
+            lang_code = st.selectbox("Choose target language", lang_codes, format_func=get_language_label, index=lang_codes.index(default_lang_code))
             lang_label = get_language_label(lang_code)
             previous = None
             for row in translations:
                 if row["task_id"] == task["id"] and row["language_code"] == lang_code and row["user_email"] == user["email"]:
                     previous = row
                     break
+            translation_default = st.session_state.edit_translation_text or (previous or {}).get("translation_text", "")
             st.markdown("**English source**")
-            st.info(task["instruction_en"])
+            st.table([
+                {"Field": "Task", "Value": task["task_text"]},
+                {"Field": "Action", "Value": task["action_text"]},
+                {"Field": "Observation", "Value": task["observation_text"]},
+            ])
             with st.form("translation_form"):
-                translation_text = st.text_area(f"Your {lang_label} translation", value=(previous or {}).get("translation_text", ""), height=180)
+                translation_text = st.text_area(f"Your {lang_label} translation", value=translation_default, height=220)
                 submitted = st.form_submit_button("Save translation", use_container_width=True)
             if submitted:
                 errors = validate_translation_form(translation_text)
@@ -538,35 +669,29 @@ create table if not exists translations (
                             "updated_at": utc_now_iso(),
                         }
                     )
+                    st.session_state.edit_translation_id = None
+                    st.session_state.edit_translation_text = ""
+                    st.session_state.edit_task_id = None
+                    st.session_state.edit_language_code = None
                     st.success("Translation saved.")
                     st.rerun()
     tab_index += 1
 
     with pages[tab_index]:
-        st.subheader("My translations")
-        my_rows = [r for r in translations if r["user_email"] == user["email"]]
-        if not my_rows:
-            st.info("You have not saved any translations yet.")
-        else:
-            for row in my_rows:
-                task = next((t for t in tasks if t["id"] == row["task_id"]), None)
-                with st.container(border=True):
-                    st.write(f"**{task['task_code'] if task else row['task_id']}** — {row['language_label']}")
-                    st.write(row["translation_text"])
-                    st.caption(f"Updated: {row['updated_at']}")
+        render_task_table(tasks, translations)
+    tab_index += 1
+
+    with pages[tab_index]:
+        render_translation_table(translations, tasks, user, storage)
     tab_index += 1
 
     with pages[tab_index]:
         st.subheader("Overview")
-        st.metric("Tasks", len(tasks))
-        st.metric("Translations", len(translations))
-        if tasks:
-            for task in tasks:
-                langs = [row["language_label"] for row in translations if row["task_id"] == task["id"]]
-                with st.container(border=True):
-                    st.write(f"**{task['task_code']}** — {task['environment']}")
-                    st.caption(task["instruction_en"])
-                    st.write("Translated into: " + (", ".join(sorted(set(langs))) if langs else "None yet"))
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Tasks", len(tasks))
+        metric_cols[1].metric("Translations", len(translations))
+        metric_cols[2].metric("Languages used", len(set(row["language_code"] for row in translations)))
+        render_task_table(tasks, translations)
 
 
 def _run_self_tests() -> None:
@@ -597,12 +722,14 @@ def _run_self_tests() -> None:
     assert signup_errors == []
     assert any("Password must be at least 8 characters." == e for e in validate_signup("user@example.com", "123", "Test User"))
 
-    valid_task = {"task_code": "task_1", "environment": "Moodle", "difficulty": "Easy", "instruction_en": "Do it"}
+    valid_task = {"task_code": "task_1", "environment": "Moodle", "difficulty": "Easy", "task_text": "Do it", "action_text": "Click", "observation_text": "DOM"}
     assert validate_task_form(valid_task) == []
-    invalid_task = validate_task_form({"task_code": "", "environment": "", "difficulty": "Bad", "instruction_en": ""})
+    invalid_task = validate_task_form({"task_code": "", "environment": "", "difficulty": "Bad", "task_text": "", "action_text": "", "observation_text": ""})
     assert any("Task code is required." == e for e in invalid_task)
     assert any("Environment is required." == e for e in invalid_task)
-    assert any("English instruction is required." == e for e in invalid_task)
+    assert any("Task is required." == e for e in invalid_task)
+    assert any("Action is required." == e for e in invalid_task)
+    assert any("Observation is required." == e for e in invalid_task)
     assert any("Difficulty must be Easy, Medium, or Hard." == e for e in invalid_task)
 
     assert validate_translation_form("Hallo") == []
@@ -621,14 +748,14 @@ def _run_self_tests() -> None:
     })
     assert storage.get_user_by_email("translator@example.com")["id"] == user["id"]
 
-    created = storage.create_task(normalize_task_payload("task_x", "HR", "Medium", "Review this application", admin["email"]))
+    created = storage.create_task(normalize_task_payload("task_x", "HR", "Medium", "Review application", "click approve", "decision screen", admin["email"]))
     assert any(t["task_code"] == "task_x" for t in storage.list_tasks())
 
     storage.upsert_translation({
         "task_id": created["id"],
         "language_code": "de",
         "language_label": "German",
-        "translation_text": "Prüfen Sie diese Bewerbung",
+        "translation_text": "Überprüfen Sie den Antrag",
         "user_email": user["email"],
         "updated_at": utc_now_iso(),
     })
@@ -643,6 +770,13 @@ def _run_self_tests() -> None:
     rows = storage.list_translations(created["id"])
     assert len([r for r in rows if r["user_email"] == user["email"] and r["language_code"] == "de"]) == 1
     assert any(r["translation_text"] == "Überarbeitete Übersetzung" for r in rows)
+
+    translation_id = rows[0]["id"]
+    storage.delete_translation(translation_id)
+    assert storage.list_translations(created["id"]) == []
+
+    storage.delete_task(created["id"])
+    assert not any(t["task_code"] == "task_x" for t in storage.list_tasks())
 
 
 if __name__ == "__main__":
