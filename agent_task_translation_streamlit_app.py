@@ -67,9 +67,15 @@ def list_to_lines(items: List[str]) -> str:
 
 
 def require_nonempty(value: str, label: str) -> Optional[str]:
-    if not value or not value.strip():
+    if not isinstance(value, str) or not value.strip():
         return f"{label} is required."
     return None
+
+
+def normalize_email(email: Any) -> str:
+    if not isinstance(email, str):
+        return ""
+    return email.strip().lower()
 
 
 def _derive_digest(password: str, salt: bytes) -> Tuple[str, str]:
@@ -147,13 +153,14 @@ def validate_translation_form(translation_text: str) -> List[str]:
 
 def validate_signup(email: str, password: str, full_name: str) -> List[str]:
     errors = []
+    normalized_email = normalize_email(email)
     if require_nonempty(full_name, "Full name"):
         errors.append("Full name is required.")
-    if require_nonempty(email, "Email"):
+    if not normalized_email:
         errors.append("Email is required.")
-    elif "@" not in email:
+    elif "@" not in normalized_email:
         errors.append("Email must be valid.")
-    if len(password) < 8:
+    if not isinstance(password, str) or len(password) < 8:
         errors.append("Password must be at least 8 characters.")
     return errors
 
@@ -242,7 +249,9 @@ class InMemoryStorage(Storage):
         return row
 
     def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        email = email.strip().lower()
+        email = normalize_email(email)
+        if not email:
+            return None
         for user in self.users:
             if user["email"].lower() == email:
                 return user
@@ -297,7 +306,10 @@ class SupabaseStorage(Storage):
         return self._request("POST", "users", json_body=payload).json()[0]
 
     def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        rows = self._request("GET", "users", params={"select": "*", "email": f"eq.{email.strip().lower()}"}).json()
+        normalized_email = normalize_email(email)
+        if not normalized_email:
+            return None
+        rows = self._request("GET", "users", params={"select": "*", "email": f"eq.{normalized_email}"}).json()
         return rows[0] if rows else None
 
 
@@ -349,8 +361,9 @@ def render_auth_box() -> Optional[Dict[str, Any]]:
             password = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Login", use_container_width=True)
         if submitted:
-            user = storage.get_user_by_email(email)
-            if not user or not verify_password(password, user["password_hash"]):
+            normalized_email = normalize_email(email)
+            user = storage.get_user_by_email(normalized_email)
+            if not user or not verify_password(password or "", user["password_hash"]):
                 st.error("Invalid email or password.")
             else:
                 st.session_state.user = user
@@ -364,8 +377,9 @@ def render_auth_box() -> Optional[Dict[str, Any]]:
             role = st.selectbox("Account type", ["translator", "admin"])
             submitted = st.form_submit_button("Create account", use_container_width=True)
         if submitted:
-            errors = validate_signup(email, password, full_name)
-            if storage.get_user_by_email(email):
+            normalized_email = normalize_email(email)
+            errors = validate_signup(normalized_email, password or "", full_name)
+            if normalized_email and storage.get_user_by_email(normalized_email):
                 errors.append("An account with this email already exists.")
             if errors:
                 for err in errors:
@@ -373,7 +387,7 @@ def render_auth_box() -> Optional[Dict[str, Any]]:
             else:
                 user = storage.create_user(
                     {
-                        "email": email.strip().lower(),
+                        "email": normalized_email,
                         "full_name": full_name.strip(),
                         "password_hash": hash_password(password),
                         "role": role,
@@ -556,6 +570,8 @@ create table if not exists translations (
 
 
 def _run_self_tests() -> None:
+    assert normalize_email(" USER@Example.COM ") == "user@example.com"
+    assert normalize_email(None) == ""
     assert get_language_label("ar-sudanese") == "Arabic – Sudanese"
     assert get_language_label("xx") == "xx"
     assert lines_to_list("a\n\n b ") == ["a", "b"]
