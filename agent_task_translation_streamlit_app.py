@@ -1,5 +1,8 @@
+import csv
 import hashlib
 import hmac
+import io
+import json
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -577,6 +580,81 @@ def render_translation_table(translations: List[Dict[str, Any]], tasks: List[Dic
         st.divider()
 
 
+def build_tasks_export_rows(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": task["id"],
+            "task_code": task["task_code"],
+            "environment": task["environment"],
+            "difficulty": task["difficulty"],
+            "task_text": task["task_text"],
+            "action_text": task["action_text"],
+            "observation_text": task["observation_text"],
+            "created_by": task.get("created_by", ""),
+            "created_at": task.get("created_at", ""),
+            "updated_at": task.get("updated_at", ""),
+        }
+        for task in tasks
+    ]
+
+
+def build_translations_export_rows(translations: List[Dict[str, Any]], tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    task_map = {task["id"]: task for task in tasks}
+    rows: List[Dict[str, Any]] = []
+    for row in translations:
+        task = task_map.get(row["task_id"], {})
+        rows.append(
+            {
+                "id": row["id"],
+                "task_id": row["task_id"],
+                "task_code": task.get("task_code", ""),
+                "environment": task.get("environment", ""),
+                "language_code": row["language_code"],
+                "language_label": row["language_label"],
+                "task_translation": row.get("task_translation", ""),
+                "action_translation": row.get("action_translation", ""),
+                "observation_translation": row.get("observation_translation", ""),
+                "user_email": row.get("user_email", ""),
+                "updated_at": row.get("updated_at", ""),
+            }
+        )
+    return rows
+
+
+def build_dataset_json(tasks: List[Dict[str, Any]], translations: List[Dict[str, Any]]) -> str:
+    task_map = {task["id"]: task for task in tasks}
+    dataset_rows: List[Dict[str, Any]] = []
+    for row in translations:
+        task = task_map.get(row["task_id"])
+        if not task:
+            continue
+        dataset_rows.append(
+            {
+                "task_id": task["id"],
+                "task_code": task["task_code"],
+                "environment": task["environment"],
+                "difficulty": task["difficulty"],
+                "source": {
+                    "language_code": "en",
+                    "language_label": "English",
+                    "task": task["task_text"],
+                    "action": task["action_text"],
+                    "observation": task["observation_text"],
+                },
+                "translation": {
+                    "language_code": row["language_code"],
+                    "language_label": row["language_label"],
+                    "task": row.get("task_translation", ""),
+                    "action": row.get("action_translation", ""),
+                    "observation": row.get("observation_translation", ""),
+                },
+                "translator_email": row.get("user_email", ""),
+                "updated_at": row.get("updated_at", ""),
+            }
+        )
+    return json.dumps(dataset_rows, ensure_ascii=False, indent=2)
+
+
 def render_streamlit_app() -> None:
     st.set_page_config(page_title="Task Translation Manager", page_icon="🌍", layout="wide")
     st.title("🌍 Task Translation Manager")
@@ -659,6 +737,50 @@ create table if not exists translations (
     storage = get_storage()
     tasks = storage.list_tasks()
     translations = storage.list_translations()
+
+    with st.expander("Export data", expanded=False):
+        st.write("Download tasks and translations for analysis or benchmark packaging.")
+
+        tasks_rows = build_tasks_export_rows(tasks)
+        translations_rows = build_translations_export_rows(translations, tasks)
+        dataset_json = build_dataset_json(tasks, translations)
+
+        tasks_buffer = io.StringIO()
+        tasks_fieldnames = ["id", "task_code", "environment", "difficulty", "task_text", "action_text", "observation_text", "created_by", "created_at", "updated_at"]
+        tasks_writer = csv.DictWriter(tasks_buffer, fieldnames=tasks_fieldnames)
+        tasks_writer.writeheader()
+        for row in tasks_rows:
+            tasks_writer.writerow(row)
+
+        translations_buffer = io.StringIO()
+        translations_fieldnames = ["id", "task_id", "task_code", "environment", "language_code", "language_label", "task_translation", "action_translation", "observation_translation", "user_email", "updated_at"]
+        translations_writer = csv.DictWriter(translations_buffer, fieldnames=translations_fieldnames)
+        translations_writer.writeheader()
+        for row in translations_rows:
+            translations_writer.writerow(row)
+
+        export_cols = st.columns(3)
+        export_cols[0].download_button(
+            "Download tasks.csv",
+            data=tasks_buffer.getvalue().encode("utf-8"),
+            file_name="tasks.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        export_cols[1].download_button(
+            "Download translations.csv",
+            data=translations_buffer.getvalue().encode("utf-8"),
+            file_name="translations.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        export_cols[2].download_button(
+            "Download dataset.json",
+            data=dataset_json.encode("utf-8"),
+            file_name="dataset.json",
+            mime="application/json",
+            use_container_width=True,
+        )
 
     tabs = ["Translate", "Tasks Table", "Translations Table", "Overview"]
     if user["role"] == "admin":
@@ -983,6 +1105,36 @@ def _run_self_tests() -> None:
 
     storage.delete_task(created["id"])
     assert not any(task["task_code"] == "task_x" for task in storage.list_tasks())
+
+    export_task = storage.create_task(
+        normalize_task_payload(
+            "task_y",
+            "Education",
+            "Easy",
+            "Open a course",
+            "click course",
+            "course page",
+            admin["email"],
+        )
+    )
+    storage.upsert_translation(
+        {
+            "task_id": export_task["id"],
+            "language_code": "es",
+            "language_label": "Spanish",
+            "task_translation": "Abra un curso",
+            "action_translation": "haga clic en curso",
+            "observation_translation": "página del curso",
+            "user_email": user["email"],
+            "updated_at": utc_now_iso(),
+        }
+    )
+    task_export_rows = build_tasks_export_rows(storage.list_tasks())
+    translation_export_rows = build_translations_export_rows(storage.list_translations(), storage.list_tasks())
+    dataset_export = build_dataset_json(storage.list_tasks(), storage.list_translations())
+    assert any(row["task_code"] == "task_y" for row in task_export_rows)
+    assert any(row["language_code"] == "es" for row in translation_export_rows)
+    assert '"language_code": "es"' in dataset_export
 
 
 if __name__ == "__main__":
