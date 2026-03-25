@@ -505,12 +505,318 @@ DEFAULT_ROWS = [
         "owner": "",
         "status": "draft",
         "notes": "",
+    },,
+
+    # =========================
+    # HEALTHCARE / OPENEMR
+    # =========================
+    {
+        "task_id": "openemr_01",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Appointment Scheduling",
+        "goal": "Schedule a patient into the correct appointment slot.",
+        "context_inputs": "Patient request, provider availability, clinic calendar, visit type",
+        "subtasks": "Open calendar -> Search patient -> Review requested date/time/provider -> Check available slots -> Select appropriate slot -> Create appointment -> Save",
+        "decision_rule": "If a valid slot exists for the requested visit type/provider, schedule the patient in the best matching available slot.",
+        "allowed_actions": "open_calendar, search_patient, read_schedule, create_appointment, save_appointment",
+        "expected_output": "decision=schedule, appointment_created=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_02",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Appointment Scheduling",
+        "goal": "Reschedule an appointment based on a patient request.",
+        "context_inputs": "Existing appointment, patient request, updated availability",
+        "subtasks": "Open existing appointment -> Read reschedule request -> Review available slots -> Select new valid slot -> Update appointment -> Save",
+        "decision_rule": "If a valid replacement slot exists, move the existing appointment rather than creating a duplicate.",
+        "allowed_actions": "open_calendar, read_appointment, read_request, update_appointment, save_appointment",
+        "expected_output": "decision=reschedule, appointment_updated=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_03",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Appointment Scheduling",
+        "goal": "Decide whether an appointment request should be routed for earlier scheduling.",
+        "context_inputs": "Patient message/request, current appointment date, symptom/urgency wording, scheduling policy",
+        "subtasks": "Open patient message -> Read request -> Compare reason against urgency rules -> Decide routine vs earlier handling -> Route or prioritize accordingly",
+        "decision_rule": "If the request contains policy-defined urgency indicators, mark it for earlier scheduling; otherwise keep routine scheduling.",
+        "allowed_actions": "open_message, read_request, review_policy, update_priority, assign_task",
+        "expected_output": "decision=earlier_schedule_or_routine, routed=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_04",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Appointment Scheduling",
+        "goal": "Decide whether to update an existing appointment or create a new one.",
+        "context_inputs": "Patient identity, appointment history, new request, current future appointments",
+        "subtasks": "Search patient -> Review existing appointments -> Compare new request with existing booking -> Decide update vs new appointment -> Perform chosen action",
+        "decision_rule": "If the request refers to an existing future appointment, update it; otherwise create a new appointment.",
+        "allowed_actions": "search_patient, read_appointment_history, create_appointment, update_appointment",
+        "expected_output": "decision=create_or_update, action_completed=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_05",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Message Triage",
+        "goal": "Classify a patient message as urgent or routine.",
+        "context_inputs": "Patient portal/message text, triage rules",
+        "subtasks": "Open message center -> Read incoming message -> Identify symptom/admin content -> Compare with urgency rules -> Assign urgency label",
+        "decision_rule": "If the message contains rule-defined urgent clinical indicators, classify it as urgent; otherwise classify it as routine.",
+        "allowed_actions": "open_message_center, read_message, apply_triage_label",
+        "expected_output": "urgency=urgent_or_routine",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_06",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Message Triage",
+        "goal": "Route a symptom-related message to a clinician.",
+        "context_inputs": "Patient message, staff routing rules, provider list",
+        "subtasks": "Open message -> Identify symptom-related content -> Determine correct clinical recipient -> Assign or forward message -> Save routing",
+        "decision_rule": "Symptom-related messages must be routed to a clinician or clinical workflow, not handled as admin-only.",
+        "allowed_actions": "open_message_center, read_message, assign_message, forward_message",
+        "expected_output": "decision=route_to_clinician, routed=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_07",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Message Triage",
+        "goal": "Identify a scheduling request from a message and route it correctly.",
+        "context_inputs": "Patient message, scheduling workflow rules",
+        "subtasks": "Open message -> Determine whether content is scheduling-related -> Select scheduling/front-desk destination -> Route message",
+        "decision_rule": "If the message is administrative scheduling content rather than clinical content, route it to scheduling workflow.",
+        "allowed_actions": "open_message_center, read_message, assign_message",
+        "expected_output": "decision=route_to_scheduling, routed=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_08",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Message Triage",
+        "goal": "Refrain from sending an automatic response when a message contains potential clinical risk.",
+        "context_inputs": "Patient message, red-flag rules, messaging policy",
+        "subtasks": "Open message -> Read content -> Detect possible clinical risk indicators -> Decide not to auto-respond -> Assign/escalate to clinician",
+        "decision_rule": "If the message contains safety-critical or uncertain clinical content, do not send an automatic response.",
+        "allowed_actions": "open_message_center, read_message, assign_message, add_note",
+        "expected_output": "decision=defer, auto_response=false",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_09",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Recall Management",
+        "goal": "Identify a patient who is overdue for follow-up.",
+        "context_inputs": "Recall board, follow-up dates, patient status",
+        "subtasks": "Open recall board -> Review due/overdue entries -> Identify overdue patient -> Open patient context if needed",
+        "decision_rule": "If the follow-up due date has passed and recall is unresolved, mark the patient as overdue.",
+        "allowed_actions": "open_recall_board, read_recall_entry, open_patient_chart",
+        "expected_output": "overdue_patient_identified=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_10",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Recall Management",
+        "goal": "Decide whether to trigger a recall reminder for a patient.",
+        "context_inputs": "Recall entry, due date, prior outreach status, reminder policy",
+        "subtasks": "Open recall board -> Inspect patient recall entry -> Check due/overdue state and prior reminders -> Decide whether reminder should be sent -> Initiate reminder/task",
+        "decision_rule": "If the patient is due/overdue and no blocking condition exists, trigger reminder outreach.",
+        "allowed_actions": "open_recall_board, read_recall_entry, create_reminder, assign_task",
+        "expected_output": "decision=send_or_not_send_reminder",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_11",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Recall Management",
+        "goal": "Prioritize overdue patients for recall outreach.",
+        "context_inputs": "Recall board entries, overdue duration, urgency labels, follow-up rules",
+        "subtasks": "Open recall board -> Read overdue entries -> Compare urgency/lateness -> Rank or tag higher-priority cases -> Save ordering/task notes",
+        "decision_rule": "Patients with greater urgency or longer overdue status should be prioritized first according to rules.",
+        "allowed_actions": "open_recall_board, read_recall_entries, update_priority, assign_task",
+        "expected_output": "prioritized_list_created=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_12",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Patient Identity",
+        "goal": "Determine whether two records refer to the same patient.",
+        "context_inputs": "Candidate patient records, demographics, identifiers, matching rule",
+        "subtasks": "Search patient records -> Compare names, DOB, contact details, identifiers -> Assess match confidence -> Decide same vs different",
+        "decision_rule": "If the records satisfy the matching rule/threshold, treat them as the same patient; otherwise keep them separate.",
+        "allowed_actions": "search_patient, read_patient_demographics, add_note",
+        "expected_output": "decision=same_or_different_patient",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_13",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Patient Identity",
+        "goal": "Decide whether to create a new patient record or use an existing one.",
+        "context_inputs": "New intake info, patient search results, matching rule",
+        "subtasks": "Search existing patients -> Compare intake data to matches -> Decide reuse existing chart or create new record -> Perform selected action",
+        "decision_rule": "If an existing record sufficiently matches the intake data, reuse it; otherwise create a new patient record.",
+        "allowed_actions": "search_patient, read_patient_demographics, create_patient",
+        "expected_output": "decision=create_or_reuse_record",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_14",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Clinical Review",
+        "goal": "Identify allergies from the patient chart before taking action.",
+        "context_inputs": "Patient chart, allergy section",
+        "subtasks": "Open patient chart -> Navigate to summary/allergy section -> Read documented allergies -> Record relevant findings for decision",
+        "decision_rule": "The allergy list in chart must be reviewed before downstream care-related action.",
+        "allowed_actions": "open_patient_chart, read_allergies, add_note",
+        "expected_output": "allergies_identified=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_15",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Clinical Review",
+        "goal": "Identify when chart information suggests a potential allergy-related safety conflict.",
+        "context_inputs": "Patient chart, allergy list, requested action/medication, safety rule",
+        "subtasks": "Open patient chart -> Read allergies -> Read requested action/medication -> Compare against allergy information -> Flag potential conflict or defer",
+        "decision_rule": "If the requested action conflicts with documented allergy information, do not proceed automatically.",
+        "allowed_actions": "open_patient_chart, read_allergies, read_medications, add_note, assign_task",
+        "expected_output": "decision=conflict_or_no_conflict",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_16",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Clinical Review",
+        "goal": "Identify when chart information suggests a potential medication-related safety conflict.",
+        "context_inputs": "Current medication list, requested medication/action, safety rule",
+        "subtasks": "Open patient chart -> Read active medications -> Read requested action -> Compare against medication-related conflict criteria -> Flag or defer",
+        "decision_rule": "If chart information suggests a medication conflict, do not proceed automatically.",
+        "allowed_actions": "open_patient_chart, read_medications, add_note, assign_task",
+        "expected_output": "decision=conflict_or_no_conflict",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_17",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Medication Safety",
+        "goal": "Classify a refill request as routine or requiring clinician review.",
+        "context_inputs": "Refill request message, medication list, refill policy, recent chart context",
+        "subtasks": "Open message/request -> Identify refill request -> Open patient chart -> Review relevant medication context -> Classify routine vs clinician review -> Route accordingly",
+        "decision_rule": "If the request meets routine refill criteria, route as routine; otherwise send for clinician review.",
+        "allowed_actions": "open_message_center, read_message, open_patient_chart, read_medications, assign_message",
+        "expected_output": "decision=routine_or_clinician_review",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_18",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Medication Safety",
+        "goal": "Defer a refill decision when chart information is incomplete or conflicting.",
+        "context_inputs": "Refill request, chart data, missing/conflicting information rule",
+        "subtasks": "Open refill request -> Open patient chart -> Inspect medication/allergy/problem context -> Detect missing or conflicting information -> Refrain from completing refill decision -> Escalate",
+        "decision_rule": "If necessary chart information is incomplete or conflicting, defer to human review.",
+        "allowed_actions": "open_message_center, read_message, open_patient_chart, add_note, assign_message",
+        "expected_output": "decision=defer, escalated=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_19",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Clinical Reminders",
+        "goal": "Identify overdue clinical reminders on the dashboard.",
+        "context_inputs": "Dashboard reminders, patient chart reminders, due dates",
+        "subtasks": "Open dashboard/patient summary -> Read reminder panel -> Identify overdue items -> Record or route follow-up",
+        "decision_rule": "Any reminder whose due condition is unmet and past due should be marked overdue.",
+        "allowed_actions": "open_dashboard, open_patient_chart, read_reminders, assign_task",
+        "expected_output": "overdue_reminders_identified=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
+    },
+    {
+        "task_id": "openemr_20",
+        "domain": "Healthcare",
+        "platform": "OpenEMR",
+        "task_group": "Safety Escalation",
+        "goal": "Refrain from acting and request manual review when information is ambiguous or safety-critical.",
+        "context_inputs": "Message/chart context, ambiguity rule, safety rule",
+        "subtasks": "Open relevant chart/message -> Inspect available information -> Detect ambiguity or safety-critical condition -> Avoid autonomous action -> Assign/escalate to human reviewer",
+        "decision_rule": "If information is ambiguous, conflicting, or safety-critical, do not complete the action autonomously.",
+        "allowed_actions": "open_patient_chart, open_message_center, add_note, assign_message, assign_task",
+        "expected_output": "decision=escalate, action_deferred=true",
+        "owner": "",
+        "status": "draft",
+        "notes": "",
     },
 ]
 
 
 COLUMNS = [
     "task_id",
+    "domain",
+    "platform",
     "task_group",
     "goal",
     "context_inputs",
@@ -537,6 +843,8 @@ def init_db():
         """
         CREATE TABLE IF NOT EXISTS tasks (
             task_id TEXT PRIMARY KEY,
+            domain TEXT NOT NULL,
+            platform TEXT NOT NULL,
             task_group TEXT NOT NULL,
             goal TEXT NOT NULL,
             context_inputs TEXT NOT NULL,
@@ -553,6 +861,19 @@ def init_db():
     )
     conn.commit()
 
+    # Migration for older DBs without domain/platform
+    existing_cols = [r["name"] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+    alter_stmts = []
+    if "domain" not in existing_cols:
+        alter_stmts.append("ALTER TABLE tasks ADD COLUMN domain TEXT DEFAULT ''")
+    if "platform" not in existing_cols:
+        alter_stmts.append("ALTER TABLE tasks ADD COLUMN platform TEXT DEFAULT ''")
+
+    for stmt in alter_stmts:
+        conn.execute(stmt)
+    if alter_stmts:
+        conn.commit()
+
     count = conn.execute("SELECT COUNT(*) AS c FROM tasks").fetchone()["c"]
     if count == 0:
         now = datetime.utcnow().isoformat(timespec="seconds")
@@ -560,11 +881,11 @@ def init_db():
         conn.executemany(
             """
             INSERT INTO tasks (
-                task_id, task_group, goal, context_inputs, subtasks,
+                task_id, domain, platform, task_group, goal, context_inputs, subtasks,
                 decision_rule, allowed_actions, expected_output,
                 owner, status, notes, updated_at
             ) VALUES (
-                :task_id, :task_group, :goal, :context_inputs, :subtasks,
+                :task_id, :domain, :platform, :task_group, :goal, :context_inputs, :subtasks,
                 :decision_rule, :allowed_actions, :expected_output,
                 :owner, :status, :notes, :updated_at
             )
@@ -579,13 +900,19 @@ def load_tasks() -> pd.DataFrame:
     conn = get_conn()
     df = pd.read_sql_query("SELECT * FROM tasks ORDER BY task_id", conn)
     conn.close()
-    return df
+    for col in COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+    return df[COLUMNS]
 
 
 def save_dataframe(df: pd.DataFrame):
     df = df.copy()
     now = datetime.utcnow().isoformat(timespec="seconds")
     df["updated_at"] = now
+    for col in COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
     df = df[COLUMNS]
 
     conn = get_conn()
@@ -593,10 +920,10 @@ def save_dataframe(df: pd.DataFrame):
     conn.executemany(
         """
         INSERT INTO tasks (
-            task_id, task_group, goal, context_inputs, subtasks,
+            task_id, domain, platform, task_group, goal, context_inputs, subtasks,
             decision_rule, allowed_actions, expected_output,
             owner, status, notes, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         df.itertuples(index=False, name=None),
     )
@@ -619,13 +946,20 @@ df = load_tasks()
 
 with st.sidebar:
     st.header("Filters")
-    groups = sorted(df["task_group"].dropna().unique().tolist())
+
+    domains = sorted(df["domain"].dropna().astype(str).unique().tolist())
+    selected_domains = st.multiselect("Domain", domains, default=domains)
+
+    platforms = sorted(df["platform"].dropna().astype(str).unique().tolist())
+    selected_platforms = st.multiselect("Platform", platforms, default=platforms)
+
+    groups = sorted(df["task_group"].dropna().astype(str).unique().tolist())
     selected_groups = st.multiselect("Task group", groups, default=groups)
 
-    statuses = sorted(df["status"].dropna().unique().tolist())
+    statuses = sorted(df["status"].dropna().astype(str).unique().tolist())
     selected_statuses = st.multiselect("Status", statuses, default=statuses)
 
-    owners = sorted([o for o in df["owner"].dropna().unique().tolist() if o])
+    owners = sorted([o for o in df["owner"].dropna().astype(str).unique().tolist() if o])
     selected_owners = st.multiselect("Owner", owners, default=owners)
 
     query = st.text_input("Search")
@@ -638,6 +972,11 @@ with st.sidebar:
     st.download_button("Download JSON", json_data, "vanta_tasks.json", "application/json")
 
 filtered = df.copy()
+
+if selected_domains:
+    filtered = filtered[filtered["domain"].isin(selected_domains)]
+if selected_platforms:
+    filtered = filtered[filtered["platform"].isin(selected_platforms)]
 if selected_groups:
     filtered = filtered[filtered["task_group"].isin(selected_groups)]
 if selected_statuses:
@@ -659,22 +998,30 @@ with tab1:
         hide_index=True,
         num_rows="dynamic",
         column_config={
-            "task_id": st.column_config.TextColumn("Task ID", required=True),
-            "task_group": st.column_config.TextColumn("Task Group", required=True),
+            "task_id": st.column_config.TextColumn("Task ID", required=True, width="medium"),
+            "domain": st.column_config.SelectboxColumn(
+                "Domain",
+                options=["Education", "Healthcare", "HR"],
+                required=True,
+                width="small",
+            ),
+            "platform": st.column_config.TextColumn("Platform", required=True, width="small"),
+            "task_group": st.column_config.TextColumn("Task Group", required=True, width="medium"),
             "goal": st.column_config.TextColumn("Goal", required=True, width="large"),
             "context_inputs": st.column_config.TextColumn("Context (Inputs)", width="large"),
             "subtasks": st.column_config.TextColumn("Subtasks", width="large"),
             "decision_rule": st.column_config.TextColumn("Decision Rule", width="large"),
             "allowed_actions": st.column_config.TextColumn("Allowed Actions", width="large"),
             "expected_output": st.column_config.TextColumn("Expected Output", width="large"),
-            "owner": st.column_config.TextColumn("Owner"),
+            "owner": st.column_config.TextColumn("Owner", width="small"),
             "status": st.column_config.SelectboxColumn(
                 "Status",
                 options=["draft", "review", "ready", "archived"],
                 required=True,
+                width="small",
             ),
             "notes": st.column_config.TextColumn("Notes", width="large"),
-            "updated_at": st.column_config.TextColumn("Updated At", disabled=True),
+            "updated_at": st.column_config.TextColumn("Updated At", disabled=True, width="medium"),
         },
         key="task_editor",
     )
@@ -682,7 +1029,6 @@ with tab1:
     col1, col2 = st.columns([1, 1])
     with col1:
         if st.button("Save table changes", type="primary"):
-            current = df.set_index("task_id", drop=False).copy()
             edited_copy = edited.copy()
 
             if edited_copy["task_id"].duplicated().any():
@@ -712,6 +1058,8 @@ with tab2:
         row = filtered[filtered["task_id"] == selected].iloc[0]
 
         st.markdown(f"### {row['task_id']} — {row['task_group']}")
+        st.write(f"**Domain:** {row['domain']}")
+        st.write(f"**Platform:** {row['platform']}")
         st.write(f"**Goal:** {row['goal']}")
         st.write(f"**Context (Inputs):** {row['context_inputs']}")
         st.write(f"**Subtasks:** {row['subtasks']}")
@@ -727,6 +1075,8 @@ with tab3:
     st.subheader("Add new task")
     with st.form("new_task_form", clear_on_submit=True):
         task_id = st.text_input("Task ID")
+        domain = st.selectbox("Domain", ["Education", "Healthcare", "HR"])
+        platform = st.text_input("Platform", value="OpenEMR" if domain == "Healthcare" else "")
         task_group = st.text_input("Task Group")
         goal = st.text_area("Goal", height=80)
         context_inputs = st.text_area("Context (Inputs)", height=100)
@@ -750,6 +1100,8 @@ with tab3:
                     [
                         {
                             "task_id": task_id,
+                            "domain": domain.strip(),
+                            "platform": platform.strip(),
                             "task_group": task_group.strip(),
                             "goal": goal.strip(),
                             "context_inputs": context_inputs.strip(),
