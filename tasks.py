@@ -505,7 +505,7 @@ DEFAULT_ROWS = [
         "owner": "",
         "status": "draft",
         "notes": "",
-    },,
+    },
 
     # =========================
     # HEALTHCARE / OPENEMR
