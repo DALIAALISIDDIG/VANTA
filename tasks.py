@@ -1228,8 +1228,7 @@ with tab1:
 
     with col2:
         if st.button("Reset database to default seed"):
-           st.set_page_config(page_title="VANTA Task Editor", page_icon="🧩", layout="wide")
-
+            st.set_page_config(page_title="VANTA Task Editor", page_icon="🧩", layout="wide")
             if DB_PATH.exists():
                 DB_PATH.unlink()
             init_db()
