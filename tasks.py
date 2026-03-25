@@ -817,6 +817,7 @@ COLUMNS = [
     "task_id",
     "domain",
     "platform",
+    "module",
     "task_group",
     "goal",
     "context_inputs",
@@ -839,12 +840,14 @@ def get_conn():
 
 def init_db():
     conn = get_conn()
+
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS tasks (
             task_id TEXT PRIMARY KEY,
             domain TEXT NOT NULL,
             platform TEXT NOT NULL,
+            module TEXT NOT NULL,
             task_group TEXT NOT NULL,
             goal TEXT NOT NULL,
             context_inputs TEXT NOT NULL,
@@ -861,18 +864,51 @@ def init_db():
     )
     conn.commit()
 
-    # Migration for older DBs without domain/platform
+    # Migrate older DBs
     existing_cols = [r["name"] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
-    alter_stmts = []
     if "domain" not in existing_cols:
-        alter_stmts.append("ALTER TABLE tasks ADD COLUMN domain TEXT DEFAULT ''")
+        conn.execute("ALTER TABLE tasks ADD COLUMN domain TEXT DEFAULT ''")
     if "platform" not in existing_cols:
-        alter_stmts.append("ALTER TABLE tasks ADD COLUMN platform TEXT DEFAULT ''")
+        conn.execute("ALTER TABLE tasks ADD COLUMN platform TEXT DEFAULT ''")
+    if "module" not in existing_cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN module TEXT DEFAULT ''")
+    conn.commit()
 
-    for stmt in alter_stmts:
-        conn.execute(stmt)
-    if alter_stmts:
-        conn.commit()
+    # Backfill old rows that were missing these fields
+    conn.execute(
+        """
+        UPDATE tasks
+        SET domain = CASE
+            WHEN task_id LIKE 'moodle_%' AND (domain IS NULL OR domain = '') THEN 'Education'
+            WHEN task_id LIKE 'openemr_%' AND (domain IS NULL OR domain = '') THEN 'Healthcare'
+            WHEN task_id LIKE 'opencats_%' AND (domain IS NULL OR domain = '') THEN 'HR'
+            ELSE domain
+        END
+        """
+    )
+    conn.execute(
+        """
+        UPDATE tasks
+        SET platform = CASE
+            WHEN task_id LIKE 'moodle_%' AND (platform IS NULL OR platform = '') THEN 'Moodle'
+            WHEN task_id LIKE 'openemr_%' AND (platform IS NULL OR platform = '') THEN 'OpenEMR'
+            WHEN task_id LIKE 'opencats_%' AND (platform IS NULL OR platform = '') THEN 'OpenCATS'
+            ELSE platform
+        END
+        """
+    )
+    conn.execute(
+        """
+        UPDATE tasks
+        SET module = CASE
+            WHEN task_id LIKE 'moodle_%' AND (module IS NULL OR module = '') THEN 'Unknown'
+            WHEN task_id LIKE 'openemr_%' AND (module IS NULL OR module = '') THEN 'Unknown'
+            WHEN task_id LIKE 'opencats_%' AND (module IS NULL OR module = '') THEN 'Unknown'
+            ELSE module
+        END
+        """
+    )
+    conn.commit()
 
     count = conn.execute("SELECT COUNT(*) AS c FROM tasks").fetchone()["c"]
     if count == 0:
@@ -881,11 +917,11 @@ def init_db():
         conn.executemany(
             """
             INSERT INTO tasks (
-                task_id, domain, platform, task_group, goal, context_inputs, subtasks,
+                task_id, domain, platform, module, task_group, goal, context_inputs, subtasks,
                 decision_rule, allowed_actions, expected_output,
                 owner, status, notes, updated_at
             ) VALUES (
-                :task_id, :domain, :platform, :task_group, :goal, :context_inputs, :subtasks,
+                :task_id, :domain, :platform, :module, :task_group, :goal, :context_inputs, :subtasks,
                 :decision_rule, :allowed_actions, :expected_output,
                 :owner, :status, :notes, :updated_at
             )
@@ -893,6 +929,7 @@ def init_db():
             rows,
         )
         conn.commit()
+
     conn.close()
 
 
@@ -920,10 +957,10 @@ def save_dataframe(df: pd.DataFrame):
     conn.executemany(
         """
         INSERT INTO tasks (
-            task_id, domain, platform, task_group, goal, context_inputs, subtasks,
+            task_id, domain, platform, module, task_group, goal, context_inputs, subtasks,
             decision_rule, allowed_actions, expected_output,
             owner, status, notes, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         df.itertuples(index=False, name=None),
     )
@@ -947,16 +984,19 @@ df = load_tasks()
 with st.sidebar:
     st.header("Filters")
 
-    domains = sorted(df["domain"].dropna().astype(str).unique().tolist())
+    domains = sorted([d for d in df["domain"].dropna().astype(str).unique().tolist() if d])
     selected_domains = st.multiselect("Domain", domains, default=domains)
 
-    platforms = sorted(df["platform"].dropna().astype(str).unique().tolist())
+    platforms = sorted([p for p in df["platform"].dropna().astype(str).unique().tolist() if p])
     selected_platforms = st.multiselect("Platform", platforms, default=platforms)
 
-    groups = sorted(df["task_group"].dropna().astype(str).unique().tolist())
+    modules = sorted([m for m in df["module"].dropna().astype(str).unique().tolist() if m])
+    selected_modules = st.multiselect("Module", modules, default=modules)
+
+    groups = sorted([g for g in df["task_group"].dropna().astype(str).unique().tolist() if g])
     selected_groups = st.multiselect("Task group", groups, default=groups)
 
-    statuses = sorted(df["status"].dropna().astype(str).unique().tolist())
+    statuses = sorted([s for s in df["status"].dropna().astype(str).unique().tolist() if s])
     selected_statuses = st.multiselect("Status", statuses, default=statuses)
 
     owners = sorted([o for o in df["owner"].dropna().astype(str).unique().tolist() if o])
@@ -977,12 +1017,15 @@ if selected_domains:
     filtered = filtered[filtered["domain"].isin(selected_domains)]
 if selected_platforms:
     filtered = filtered[filtered["platform"].isin(selected_platforms)]
+if selected_modules:
+    filtered = filtered[filtered["module"].isin(selected_modules)]
 if selected_groups:
     filtered = filtered[filtered["task_group"].isin(selected_groups)]
 if selected_statuses:
     filtered = filtered[filtered["status"].isin(selected_statuses)]
 if selected_owners:
     filtered = filtered[filtered["owner"].isin(selected_owners)]
+
 if query:
     q = query.lower()
     mask = filtered.astype(str).apply(lambda col: col.str.lower().str.contains(q, na=False))
@@ -1005,7 +1048,13 @@ with tab1:
                 required=True,
                 width="small",
             ),
-            "platform": st.column_config.TextColumn("Platform", required=True, width="small"),
+            "platform": st.column_config.SelectboxColumn(
+                "Platform",
+                options=["Moodle", "OpenEMR", "OpenCATS"],
+                required=True,
+                width="small",
+            ),
+            "module": st.column_config.TextColumn("Module", required=True, width="medium"),
             "task_group": st.column_config.TextColumn("Task Group", required=True, width="medium"),
             "goal": st.column_config.TextColumn("Goal", required=True, width="large"),
             "context_inputs": st.column_config.TextColumn("Context (Inputs)", width="large"),
@@ -1060,6 +1109,7 @@ with tab2:
         st.markdown(f"### {row['task_id']} — {row['task_group']}")
         st.write(f"**Domain:** {row['domain']}")
         st.write(f"**Platform:** {row['platform']}")
+        st.write(f"**Module:** {row['module']}")
         st.write(f"**Goal:** {row['goal']}")
         st.write(f"**Context (Inputs):** {row['context_inputs']}")
         st.write(f"**Subtasks:** {row['subtasks']}")
@@ -1076,7 +1126,9 @@ with tab3:
     with st.form("new_task_form", clear_on_submit=True):
         task_id = st.text_input("Task ID")
         domain = st.selectbox("Domain", ["Education", "Healthcare", "HR"])
-        platform = st.text_input("Platform", value="OpenEMR" if domain == "Healthcare" else "")
+        default_platform = "Moodle" if domain == "Education" else "OpenEMR" if domain == "Healthcare" else "OpenCATS"
+        platform = st.selectbox("Platform", ["Moodle", "OpenEMR", "OpenCATS"], index=["Moodle", "OpenEMR", "OpenCATS"].index(default_platform))
+        module = st.text_input("Module")
         task_group = st.text_input("Task Group")
         goal = st.text_area("Goal", height=80)
         context_inputs = st.text_area("Context (Inputs)", height=100)
@@ -1102,6 +1154,7 @@ with tab3:
                             "task_id": task_id,
                             "domain": domain.strip(),
                             "platform": platform.strip(),
+                            "module": module.strip(),
                             "task_group": task_group.strip(),
                             "goal": goal.strip(),
                             "context_inputs": context_inputs.strip(),
